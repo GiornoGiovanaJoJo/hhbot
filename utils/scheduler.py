@@ -30,8 +30,10 @@ class TaskScheduler:
         self.cache_timestamps: Dict[int, datetime] = {}
         self.cache_ttl_hours = 24
         self.error_counts: Dict[int, Dict[str, int]] = {}
-        # Новое: слежим вакансии, требующие тест
-        self.test_required_vacancies: Set[str] = set()
+        # FIX: Чёрный список вакансий, требующих тест
+        self.blacklist_test_required: Set[str] = set()
+        # Отслеживаем время последней попытки для каждой вакансии с тестом
+        self.test_vacancy_attempts: Dict[str, int] = {}
 
     async def start(self) -> None:
         """Запуск планировщика"""
@@ -59,7 +61,8 @@ class TaskScheduler:
             self.user_vacancy_cache.clear()
             self.cache_timestamps.clear()
             self.error_counts.clear()
-            self.test_required_vacancies.clear()
+            self.blacklist_test_required.clear()
+            self.test_vacancy_attempts.clear()
 
             logger.info("Планировщик задач остановлен")
 
@@ -240,18 +243,23 @@ class TaskScheduler:
             if not vacancies:
                 return []
 
-            # FIX: Отсеиваем вакансии с тестами
+            # FIX: Отсеиваем вакансии с тестами ПО НАЗВАНИЮ
             vacancies = vacancy_filter.filter_vacancies(vacancies)
             logger.info(f"После фильтра (тесты, архив): {len(vacancies)} вакансий")
 
             if not vacancies:
-                logger.warning(f"У всех вакансий по ван критериям вид несовместимых с искомым")
+                logger.warning(f"У всех вакансий по наш критериям вид несовместимых с искомым")
                 return []
 
             final_vacancies = []
             for vacancy_data in vacancies:
                 vacancy = vacancy_data if isinstance(vacancy_data, dict) else {'id': vacancy_data}
                 vacancy_id = str(vacancy.get('id'))
+
+                # FIX: Пропускаем вакансии из чёрного списка
+                if vacancy_id in self.blacklist_test_required:
+                    logger.debug(f"⛔ Вакансия {vacancy_id} в чёрном списке (требует тест) - пропускаем")
+                    continue
 
                 if not await self._is_response_exists(telegram_id, vacancy_id):
                     final_vacancies.append(vacancy_data)
@@ -331,10 +339,11 @@ class TaskScheduler:
                         await asyncio.sleep(delay)
                     else:
                         errors_count += 1
+                        
+                        # FIX: Если тест требуется - добавляем в чёрный список
                         if error_type == 'test_required':
-                            # Новое: добавляем в чёрный список
-                            self.test_required_vacancies.add(vacancy_id)
-                            logger.info(f"📱 Вакансия {vacancy_id} требует тест, добавлям в чёрный список")
+                            self.blacklist_test_required.add(vacancy_id)
+                            logger.info(f"🚫 Вакансия {vacancy_id} требует тест, добавляем в чёрный список")
                         
                         if telegram_id in self.error_counts:
                             self.error_counts[telegram_id][error_type] += 1
@@ -429,7 +438,7 @@ class TaskScheduler:
             stats = await db_repository.get_today_stats(telegram_id)
             return stats.get('today_count', 0)
         except Exception as e:
-            logger.error(f"Ошибка получения статистики тодая: {e}")
+            logger.error(f"Ошибка получения статистики тодаяя: {e}")
             return None
 
     async def _load_active_users(self) -> None:
@@ -452,22 +461,31 @@ class TaskScheduler:
         """Очистка кеша обработанных вакансий"""
         self.user_vacancy_cache.clear()
         self.cache_timestamps.clear()
-        self.test_required_vacancies.clear()
         logger.info("Кеш обработанных вакансий очищен")
+
+    def get_blacklist_count(self) -> int:
+        """Получение количества вакансий в чёрном списке"""
+        return len(self.blacklist_test_required)
+
+    def clear_blacklist(self) -> None:
+        """Очистка чёрного списка вакансий"""
+        self.blacklist_test_required.clear()
+        self.test_vacancy_attempts.clear()
+        logger.info("Чёрный список вакансий очищен")
 
 
 task_scheduler = TaskScheduler()
 
 
 async def start_continuous_auto_responses(telegram_id: int) -> bool:
-    """Запуск непрерывных автооткликов"""
+    """Запуск непрерывных автоответов"""
     global continuous_tasks
 
     if telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done():
         logger.warning(f"Непрерывные автоотклики уже запущены для {telegram_id}")
         return False
 
-    logger.info(f"Запуск непрерывных автооткликов для {telegram_id}")
+    logger.info(f"Запуск непрерывных автоответов для {telegram_id}")
 
     task = asyncio.create_task(_continuous_auto_responses_loop(telegram_id))
     continuous_tasks[telegram_id] = task
@@ -477,7 +495,7 @@ async def start_continuous_auto_responses(telegram_id: int) -> bool:
 
 
 async def _continuous_auto_responses_loop(telegram_id: int) -> None:
-    """Основной цикл непрерывных автооткликов"""
+    """Основной цикл непрерывных автоответов"""
     logger.info(f"Цикл непрерывных откликов начался для {telegram_id}")
 
     iteration = 0
@@ -552,7 +570,7 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
 
 
 async def stop_continuous_auto_responses(telegram_id: int) -> bool:
-    """Остановка непрерывных автооткликов"""
+    """Остановка непрерывных автоответов"""
     global continuous_tasks
     if telegram_id not in continuous_tasks:
         logger.warning(f"Непрерывные автоотклики не запущены для {telegram_id}")
