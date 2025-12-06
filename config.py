@@ -46,7 +46,7 @@ class Config:
 
     # Настройки автоотклика
     MAX_RESPONSES_PER_DAY: int = config('MAX_RESPONSES_PER_DAY', default=200, cast=int)
-    RESPONSE_DELAY_SECONDS: int = config('RESPONSE_DELAY_SECONDS', default=30, cast=int)
+    RESPONSE_DELAY_SECONDS: int = config('RESPONSE_DELAY_SECONDS', default=10, cast=int)  # ⚡ Изменено с 30 на 10 секунд
     AUTO_RESPONSE_ENABLED: bool = config('AUTO_RESPONSE_ENABLED', default=False, cast=bool)
 
     # Настройки поиска вакансий
