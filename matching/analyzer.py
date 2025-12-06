@@ -271,16 +271,29 @@ class ResumeVacancyMatcher:
         skills_percentage: float,
         salary_compatible: bool
     ) -> int:
-        """Расчет общего скора соответствия (0-100)"""
+        """Расчет общего скора соответствия (0-100)
+        
+        Логика расчета:
+        - Опыт работы: 40% (должен совпадать требованиям)
+        - Навыки: 50% (процент совпадения)
+        - Зарплата: 10% (должна быть совместима)
+        """
 
         score = 0
 
         # Опыт работы (40% от общего скора)
         if experience_matches:
             score += 40
+        else:
+            # Даже если опыт не совпадает, даем 20 очков (50% от 40)
+            score += 20
 
         # Навыки (50% от общего скора)
-        score += (skills_percentage * 0.5)
+        # Минимум 30% навыков для прохождения фильтра
+        if skills_percentage >= 30:
+            score += (skills_percentage * 0.5)
+        else:
+            score += (skills_percentage * 0.3)  # Менее щадящий расчет
 
         # Зарплата (10% от общего скора)
         if salary_compatible:
@@ -297,15 +310,64 @@ class ResumeVacancyMatcher:
         """Фильтрация подходящих вакансий"""
 
         suitable_vacancies = []
+        analysis_results = []  # Для логирования
+
+        logger.info(f"📊 Начало анализа {len(vacancies)} вакансий (мин. скор: {min_score})")
 
         for vacancy in vacancies:
-            match_result = self.analyze_vacancy_match(resume_data, vacancy)
-
-            if match_result['overall_score'] >= min_score:
-                suitable_vacancies.append({
-                    'vacancy': vacancy,
-                    'match_analysis': match_result
+            try:
+                match_result = self.analyze_vacancy_match(resume_data, vacancy)
+                vacancy_id = vacancy.get('id', 'unknown')
+                overall_score = match_result['overall_score']
+                
+                analysis_results.append({
+                    'id': vacancy_id,
+                    'name': vacancy.get('name', ''),
+                    'score': overall_score
                 })
+
+                if overall_score >= min_score:
+                    suitable_vacancies.append({
+                        'vacancy': vacancy,
+                        'match_analysis': match_result
+                    })
+                    logger.debug(
+                        f"✅ Вакансия {vacancy_id} подходит! Скор: {overall_score} "
+                        f"(Опыт: {match_result['experience']['matches']}, "
+                        f"Навыки: {match_result['skills']['match_percentage']}%)"
+                    )
+                else:
+                    logger.debug(
+                        f"❌ Вакансия {vacancy_id} не подходит. Скор: {overall_score} "
+                        f"(нужен {min_score}+) "
+                        f"[Опыт: {match_result['experience']['matches']}, "
+                        f"Навыки: {match_result['skills']['match_percentage']}%]"
+                    )
+
+            except Exception as e:
+                vacancy_id = vacancy.get('id', 'unknown')
+                logger.error(f"⚠️ Ошибка анализа вакансии {vacancy_id}: {e}")
+                continue
+
+        # Логирование статистики
+        scores = [r['score'] for r in analysis_results]
+        if scores:
+            avg_score = sum(scores) / len(scores)
+            max_score = max(scores)
+            min_score_actual = min(scores)
+            logger.info(
+                f"📈 Статистика анализа: "
+                f"Подходит: {len(suitable_vacancies)}/{len(vacancies)}, "
+                f"Средний скор: {avg_score:.1f}, "
+                f"Диапазон: {min_score_actual:.0f}-{max_score:.0f}"
+            )
+
+            # Логируем топ 5 вакансий
+            top_vacancies = sorted(analysis_results, key=lambda x: x['score'], reverse=True)[:5]
+            if top_vacancies:
+                logger.info("🏆 Топ-5 вакансий по скору:")
+                for i, v in enumerate(top_vacancies, 1):
+                    logger.info(f"  {i}. [{v['score']}] {v['name'][:50]}")
 
         # Сортируем по убыванию скора соответствия
         suitable_vacancies.sort(
