@@ -470,24 +470,134 @@ class TaskScheduler:
 task_scheduler = TaskScheduler()
 
 
-# Помногательные функции (сохраним некритичные части)
-# ...
+# ========== НЕПРЕРЫВНЫЕ АВТООТКЛИКИ (Continuous Auto-Responses) ==========
+
+async def start_continuous_auto_responses(telegram_id: int) -> bool:
+    """Запуск непрерывных автооткликов (каждую минуту)"""
+    global continuous_tasks
+
+    # Проверяем что уже не запущены
+    if telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done():
+        logger.warning(f"Непрерывные автоотклики уже запущены для {telegram_id}")
+        return False
+
+    logger.info(f"Запуск непрерывных автооткликов для {telegram_id}")
+
+    # Создаем и сохраняем задачу
+    task = asyncio.create_task(_continuous_auto_responses_loop(telegram_id))
+    continuous_tasks[telegram_id] = task
+
+    logger.info(f"Непрерывные автоотклики запущены для {telegram_id}")
+    return True
+
+
+async def _continuous_auto_responses_loop(telegram_id: int) -> None:
+    """Основной цикл непрерывных автооткликов"""
+    logger.info(f"Цикл непрерывных откликов начался для {telegram_id}")
+
+    iteration = 0
+    error_count = 0
+    max_consecutive_errors = 5
+
+    try:
+        while True:
+            iteration += 1
+            logger.info(f"Итерация {iteration} непрерывных откликов для {telegram_id}")
+
+            try:
+                # Проверяем предварительные условия
+                if not await task_scheduler._validate_user_conditions(telegram_id):
+                    logger.warning(f"Условия не пройдены, остановка непрерывных откликов для {telegram_id}")
+                    break
+
+                # Получаем настройки
+                user_settings = await db_repository.get_user_settings(telegram_id)
+                active_resume = await db_repository.get_active_resume(telegram_id)
+
+                if not user_settings or not active_resume:
+                    logger.warning(f"Нет настроек или резюме для {telegram_id}")
+                    break
+
+                # Ищем вакансии
+                suitable_vacancies = await task_scheduler._find_suitable_vacancies(
+                    telegram_id, user_settings, active_resume
+                )
+
+                if suitable_vacancies:
+                    # Отправляем отклики
+                    responses_sent, errors_count = await task_scheduler._send_responses(
+                        telegram_id, suitable_vacancies, active_resume, user_settings
+                    )
+
+                    logger.info(
+                        f"Непрерывные отклики итерация {iteration}: "
+                        f"отправлено {responses_sent}, ошибок {errors_count}"
+                    )
+
+                    # Отправляем уведомление в Telegram каждые 10 итераций
+                    if iteration % 10 == 0:
+                        total_today = await task_scheduler._get_today_responses_count(telegram_id)
+                        logger.info(f"Статистика за сегодня: {total_today} откликов для {telegram_id}")
+
+                    error_count = 0  # Сбрасываем счетчик ошибок
+                else:
+                    logger.info(f"Нет новых подходящих вакансий для {telegram_id}")
+
+                # Ждем перед следующей итерацией (1 минута)
+                await asyncio.sleep(60)
+
+            except asyncio.CancelledError:
+                logger.info(f"Непрерывные автоотклики отменены для {telegram_id}")
+                break
+            except Exception as e:
+                error_count += 1
+                logger.error(f"Ошибка в цикле непрерывных откликов для {telegram_id}: {e}")
+
+                if error_count >= max_consecutive_errors:
+                    logger.error(
+                        f"Превышено максимальное количество ошибок ({max_consecutive_errors}), "
+                        f"остановка для {telegram_id}"
+                    )
+                    await task_scheduler._send_critical_error_notification(
+                        telegram_id,
+                        f"Слишком много ошибок в непрерывных автоответах. Автоотклики остановлены."
+                    )
+                    break
+
+                # Ждем перед повторной попыткой
+                await asyncio.sleep(60)
+
+    finally:
+        logger.info(f"Цикл непрерывных откликов завершился для {telegram_id}")
+        # Очищаем задачу из словаря
+        if telegram_id in continuous_tasks:
+            del continuous_tasks[telegram_id]
+
+
 async def stop_continuous_auto_responses(telegram_id: int) -> bool:
     """Остановка непрерывных автооткликов"""
     global continuous_tasks
     if telegram_id not in continuous_tasks:
+        logger.warning(f"Непрерывные автоотклики не запущены для {telegram_id}")
         return False
+
     task = continuous_tasks[telegram_id]
     if not task.done():
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
+            logger.info(f"Задача отмены непрерывных откликов для {telegram_id}")
             pass
-    del continuous_tasks[telegram_id]
+
+    if telegram_id in continuous_tasks:
+        del continuous_tasks[telegram_id]
+
+    logger.info(f"Непрерывные автоотклики остановлены для {telegram_id}")
     return True
 
+
 def is_continuous_running(telegram_id: int) -> bool:
-    """Проверка непрерывных автооткликов"""
+    """Проверка запущены ли непрерывные автоотклики"""
     global continuous_tasks
     return telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done()
