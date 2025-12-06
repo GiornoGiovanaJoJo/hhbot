@@ -438,7 +438,7 @@ class TaskScheduler:
 
     async def _generate_cover_letter(self, vacancy: Dict[str, Any], resume: Dict[str, Any], template: str = None) -> str:
         """Генерация сопроводительного письма"""
-        # FIX: НА РЕАЛЬНО загружаем сопроводительное письмо
+        # FIX: НА РЕАЛьНО загружаем сопроводительное письмо
         try:
             # Пробуем тю путь что надо
             cover_letter_path = Path(template) if template else Path('config/cover_letter_template.txt')
@@ -531,6 +531,11 @@ async def start_continuous_auto_responses(telegram_id: int) -> bool:
     return True
 
 
+def is_continuous_running(telegram_id: int) -> bool:
+    """💋 Проверъ работают ли непрерывные автоотклики"""
+    return telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done()
+
+
 async def _continuous_auto_responses_loop(telegram_id: int) -> None:
     """Основной цикл непрерывных автоответов"""
     logger.info(f"Цикл непрерывных откликов начался для {telegram_id}")
@@ -606,13 +611,13 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
             del continuous_tasks[telegram_id]
 
 
-async def stop_continuous_auto_responses(telegram_id: int) -> None:
+async def stop_continuous_auto_responses(telegram_id: int) -> bool:
     """Остановка непрерывных автоответов"""
     global continuous_tasks
 
     if telegram_id not in continuous_tasks:
         logger.warning(f"Непрерывные автоответы не запущены для {telegram_id}")
-        return
+        return False
 
     task = continuous_tasks[telegram_id]
     if not task.done():
@@ -624,3 +629,4 @@ async def stop_continuous_auto_responses(telegram_id: int) -> None:
             pass
 
     logger.info(f"Непрерывные автоответы остановлены для {telegram_id}")
+    return True
