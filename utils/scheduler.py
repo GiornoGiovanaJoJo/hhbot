@@ -38,6 +38,8 @@ class TaskScheduler:
         # FIX: Кеш для сопроводительного письма
         self._cover_letter_cache: Optional[str] = None
         self._cover_letter_cache_time: Optional[datetime] = None
+        # Нижний порог скора для фильтрации
+        self.default_min_score = 50  # Первоначальный порог достаточно низкий
 
     async def start(self) -> None:
         """Запуск планировщика"""
@@ -143,8 +145,15 @@ class TaskScheduler:
                 logger.warning(f"Нет активного резюме для пользователя {telegram_id}")
                 return
 
+            # Получаем порог скора (или используем дефолт)
+            min_score = user_settings.get('min_match_score')
+            if not isinstance(min_score, int):
+                min_score = self.default_min_score
+
+            logger.info(f"🏗️ Использую нижний порог скора: {min_score}")
+
             suitable_vacancies = await self._find_suitable_vacancies(
-                telegram_id, user_settings, active_resume
+                telegram_id, user_settings, active_resume, min_score
             )
 
             logger.info(f"Найдено подходящих вакансий: {len(suitable_vacancies)} для пользователя {telegram_id}")
@@ -212,10 +221,17 @@ class TaskScheduler:
         self,
         telegram_id: int,
         user_settings: Dict[str, Any],
-        active_resume: Dict[str, Any]
+        active_resume: Dict[str, Any],
+        min_score: int = None
     ) -> List[Dict[str, Any]]:
         """Поиск подходящих вакансий"""
         try:
+            # Если мин_скор не передан, используем дефолт
+            if min_score is None:
+                min_score = user_settings.get('min_match_score')
+                if not isinstance(min_score, int):
+                    min_score = self.default_min_score
+
             if self._is_cache_expired(telegram_id):
                 logger.info(f"Кеш вакансий истек: очищаем для пользователя {telegram_id}")
                 if telegram_id in self.user_vacancy_cache:
@@ -237,7 +253,7 @@ class TaskScheduler:
 
             search_params = {k: v for k, v in search_params.items() if v is not None}
 
-            logger.info(f"Поиск вакансий с параметрами: {search_params}")
+            logger.info(f"🔍 Поиск вакансий с параметрами: {search_params}")
 
             response = await hh_client.search_vacancies(**search_params)
             vacancies = response.get('items', [])
@@ -252,7 +268,7 @@ class TaskScheduler:
             logger.info(f"После фильтра (тесты, архив): {len(vacancies)} вакансий")
 
             if not vacancies:
-                logger.warning(f"У всех вакансий по наш критериям вид несовместимых с искомым")
+                logger.warning(f"У всех вакансий по нашим критериям вид несовместимых с искомым")
                 return []
 
             final_vacancies = []
@@ -262,7 +278,7 @@ class TaskScheduler:
 
                 # FIX: Пропускаем вакансии из чёрного списка
                 if vacancy_id in self.blacklist_test_required:
-                    logger.debug(f"⛔ Вакансия {vacancy_id} в чёрном списке (требует тест) - пропускаем")
+                    logger.debug(f"⚫️ Вакансия {vacancy_id} в чёрном списке (требует тест) - пропускаем")
                     continue
 
                 if not await self._is_response_exists(telegram_id, vacancy_id):
@@ -273,10 +289,6 @@ class TaskScheduler:
 
             if not final_vacancies:
                 return []
-
-            min_score = user_settings.get('min_match_score')
-            if not isinstance(min_score, int):
-                min_score = 60
 
             suitable_vacancies = matcher.filter_suitable_vacancies(
                 active_resume, final_vacancies, min_score
@@ -467,7 +479,7 @@ class TaskScheduler:
             return None
 
     async def _load_active_users(self) -> None:
-        """Загруженние активных пользователей из БД"""
+        """Лоадинг активных пользователей из БД"""
         pass
 
     def get_active_users_count(self) -> int:
@@ -594,30 +606,21 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
             del continuous_tasks[telegram_id]
 
 
-async def stop_continuous_auto_responses(telegram_id: int) -> bool:
+async def stop_continuous_auto_responses(telegram_id: int) -> None:
     """Остановка непрерывных автоответов"""
     global continuous_tasks
+
     if telegram_id not in continuous_tasks:
-        logger.warning(f"Непрерывные автоотклики не запущены для {telegram_id}")
-        return False
+        logger.warning(f"Непрерывные автоответы не запущены для {telegram_id}")
+        return
 
     task = continuous_tasks[telegram_id]
     if not task.done():
         task.cancel()
+
         try:
             await task
         except asyncio.CancelledError:
-            logger.info(f"Задача отмены непрерывных откликов для {telegram_id}")
             pass
 
-    if telegram_id in continuous_tasks:
-        del continuous_tasks[telegram_id]
-
-    logger.info(f"Непрерывные автоотклики остановлены для {telegram_id}")
-    return True
-
-
-def is_continuous_running(telegram_id: int) -> bool:
-    """Проверка запущены ли непрерывные автоотклики"""
-    global continuous_tasks
-    return telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done()
+    logger.info(f"Непрерывные автоответы остановлены для {telegram_id}")
