@@ -87,7 +87,8 @@ async def process_keywords(message: Message, state: FSMContext) -> None:
     keywords = message.text.strip()
     user_id = message.from_user.id
 
-    # Сохраняем в состояние
+    # FIX: НЕ очищаем состояние, чтобы сохранить данные для сохранения
+    # просто обновляем новое значение
     await state.update_data(keywords=keywords)
 
     await message.answer(
@@ -96,7 +97,7 @@ async def process_keywords(message: Message, state: FSMContext) -> None:
         reply_markup=get_settings_keyboard()
     )
 
-    await state.clear()
+    # НЕ вызываем await state.clear() - состояние остаётся!
 
 
 @router.callback_query(F.data == "set_area")
@@ -129,6 +130,7 @@ async def process_area_selection(callback: CallbackQuery, state: FSMContext) -> 
 
     area_name = area_names.get(area_id, "Другой регион")
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(area_id=area_id, area_name=area_name)
 
     await callback.message.answer(
@@ -159,6 +161,7 @@ async def process_custom_area(message: Message, state: FSMContext) -> None:
     area_name = message.text.strip()
 
     # В реальном приложении здесь был бы поиск по HH API справочнику регионов
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(area_name=area_name, area_id=None)
 
     await message.answer(
@@ -167,7 +170,7 @@ async def process_custom_area(message: Message, state: FSMContext) -> None:
         reply_markup=get_settings_keyboard()
     )
 
-    await state.clear()
+    # НЕ очищаем состояние!
 
 
 @router.callback_query(F.data == "set_salary")
@@ -196,6 +199,7 @@ async def process_salary(message: Message, state: FSMContext) -> None:
             await message.answer("❌ Зарплата не может быть отрицательной. Попробуйте еще раз.")
             return
 
+        # FIX: обновляем данные БЕЗ clear()
         await state.update_data(min_salary=salary)
 
         await message.answer(
@@ -203,7 +207,7 @@ async def process_salary(message: Message, state: FSMContext) -> None:
             reply_markup=get_settings_keyboard()
         )
 
-        await state.clear()
+        # НЕ очищаем состояние!
 
     except ValueError:
         await message.answer(
@@ -239,6 +243,7 @@ async def process_experience(callback: CallbackQuery, state: FSMContext) -> None
 
     exp_name = exp_names.get(exp_id, exp_id)
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(experience=exp_id)
 
     await callback.message.answer(
@@ -276,6 +281,7 @@ async def process_employment(callback: CallbackQuery, state: FSMContext) -> None
 
     emp_name = emp_names.get(emp_id, emp_id)
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(employment_type=emp_id)
 
     await callback.message.answer(
@@ -314,6 +320,7 @@ async def process_schedule(callback: CallbackQuery, state: FSMContext) -> None:
 
     sch_name = sch_names.get(sch_id, sch_id)
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(schedule=sch_id)
 
     await callback.message.answer(
@@ -345,6 +352,7 @@ async def process_exclusions(message: Message, state: FSMContext) -> None:
 
     exclusions = message.text.strip()
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(exclude_keywords=exclusions)
 
     await message.answer(
@@ -352,7 +360,7 @@ async def process_exclusions(message: Message, state: FSMContext) -> None:
         reply_markup=get_settings_keyboard()
     )
 
-    await state.clear()
+    # НЕ очищаем состояние!
 
 
 @router.callback_query(F.data == "set_cover_letter")
@@ -380,6 +388,7 @@ async def process_cover_letter(message: Message, state: FSMContext) -> None:
 
     template = message.text.strip()
 
+    # FIX: обновляем данные БЕЗ clear()
     await state.update_data(cover_letter_template=template)
 
     await message.answer(
@@ -387,7 +396,7 @@ async def process_cover_letter(message: Message, state: FSMContext) -> None:
         reply_markup=get_settings_keyboard()
     )
 
-    await state.clear()
+    # НЕ очищаем состояние!
 
 
 @router.callback_query(F.data == "save_settings")
@@ -395,14 +404,20 @@ async def save_settings_callback(callback: CallbackQuery, state: FSMContext) -> 
     """Сохранение всех настроек"""
 
     user_id = callback.from_user.id
-    data = await state.get_data()  # это только новые ответы
+    data = await state.get_data()  # Получаем все накопленные данные
     await callback.answer()
 
-    # Оставляем в data только ключи с непустыми значениями
+    logger.info(f"🔍 Попытка сохранения настроек для user={user_id}")
+    logger.info(f"📦 Данные в состоянии: {data}")
+
+    # FIX: Оставляем в data только ключи с непустыми значениями
     filtered = {k: v for k, v in data.items() if v is not None and v != ""}
+
+    logger.info(f"✅ Отфильтрованные данные: {filtered}")
 
     if not filtered:
         # Если пользователь не ввёл ни одного нового значения — просим его заполнить
+        logger.warning(f"⚠️ Нет новых данных для сохранения у user={user_id}")
         await callback.message.answer(
             "❌ Нет данных для сохранения. Сначала введите хотя бы одно новое значение через кнопки или ответы."
         )
@@ -411,16 +426,19 @@ async def save_settings_callback(callback: CallbackQuery, state: FSMContext) -> 
     try:
         # Берём старые настройки (или пустой словарь)
         current = await db_repository.get_user_settings(user_id) or {}
+        logger.info(f"📖 Текущие настройки в БД: {current}")
 
         # Обновляем только те поля, которые пользователь ввёл
         updated = {**current, **filtered}
+        logger.info(f"🔄 Объединённые настройки: {updated}")
 
         # Сохраняем в БД
         await db_repository.save_user_settings(user_id, updated)
+        logger.info(f"✅ Настройки сохранены для user={user_id}")
 
         # Лог и ответ пользователю
         saved = await db_repository.get_user_settings(user_id)
-        logger.info(f"Сохранённые настройки в БД: {saved}")
+        logger.info(f"📝 Верификация: Сохранённые настройки в БД: {saved}")
 
         await callback.message.answer(
             "<b>✅ Настройки сохранены успешно!</b>\n\n"
@@ -430,13 +448,11 @@ async def save_settings_callback(callback: CallbackQuery, state: FSMContext) -> 
             parse_mode="HTML"
         )
 
+        # ТОЛЬКО ТЕПЕРЬ очищаем состояние (после сохранения)
         await state.clear()
 
     except Exception as e:
-        logger.error(f"Ошибка сохранения настроек: {e}")
+        logger.error(f"❌ Ошибка сохранения настроек для user={user_id}: {e}")
         await callback.message.answer(
             f"❌ Ошибка при сохранении настроек: {e}"
         )
-
-
-    await callback.answer()
