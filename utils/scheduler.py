@@ -181,7 +181,12 @@ class TaskScheduler:
                 await self.stop_auto_responses(telegram_id)
                 return False
 
+            # FIX: Добавляем проверку на None перед сравнением
             today_count = await self._get_today_responses_count(telegram_id)
+            if today_count is None:
+                logger.warning(f"today_count вернул None для пользователя {telegram_id}, используем 0")
+                today_count = 0
+            
             max_responses = getattr(Config, 'MAX_RESPONSES_PER_DAY', 20)
 
             if today_count >= max_responses:
