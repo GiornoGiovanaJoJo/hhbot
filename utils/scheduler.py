@@ -13,9 +13,10 @@ from database.repository import db_repository
 from hh_api.client import hh_client
 from hh_api.auth import auth_manager
 from matching.analyzer import matcher
+from matching.vacancy_filter import vacancy_filter
 
 # Глобальные переменные для управления непрерывными автоответами
-continuous_tasks = {}  # словарь для хранения запущенных задач: {telegram_id: task}
+continuous_tasks = {}
 
 
 class TaskScheduler:
@@ -29,6 +30,8 @@ class TaskScheduler:
         self.cache_timestamps: Dict[int, datetime] = {}
         self.cache_ttl_hours = 24
         self.error_counts: Dict[int, Dict[str, int]] = {}
+        # Новое: слежим вакансии, требующие тест
+        self.test_required_vacancies: Set[str] = set()
 
     async def start(self) -> None:
         """Запуск планировщика"""
@@ -56,6 +59,7 @@ class TaskScheduler:
             self.user_vacancy_cache.clear()
             self.cache_timestamps.clear()
             self.error_counts.clear()
+            self.test_required_vacancies.clear()
 
             logger.info("Планировщик задач остановлен")
 
@@ -171,7 +175,6 @@ class TaskScheduler:
                 await self.stop_auto_responses(telegram_id)
                 return False
 
-            # FIX: Проверка на None перед сравнением
             today_count = await self._get_today_responses_count(telegram_id)
             if today_count is None:
                 logger.warning(f"today_count вернул None для пользователя {telegram_id}, используем 0")
@@ -237,6 +240,14 @@ class TaskScheduler:
             if not vacancies:
                 return []
 
+            # FIX: Отсеиваем вакансии с тестами
+            vacancies = vacancy_filter.filter_vacancies(vacancies)
+            logger.info(f"После фильтра (тесты, архив): {len(vacancies)} вакансий")
+
+            if not vacancies:
+                logger.warning(f"У всех вакансий по ван критериям вид несовместимых с искомым")
+                return []
+
             final_vacancies = []
             for vacancy_data in vacancies:
                 vacancy = vacancy_data if isinstance(vacancy_data, dict) else {'id': vacancy_data}
@@ -281,7 +292,6 @@ class TaskScheduler:
         try:
             for vacancy_data in suitable_vacancies:
                 try:
-                    # FIX: Проверка на None перед сравнением
                     today_count = await self._get_today_responses_count(telegram_id)
                     if today_count is None:
                         logger.warning(f"today_count вернул None в _send_responses для {telegram_id}, используем 0")
@@ -321,6 +331,11 @@ class TaskScheduler:
                         await asyncio.sleep(delay)
                     else:
                         errors_count += 1
+                        if error_type == 'test_required':
+                            # Новое: добавляем в чёрный список
+                            self.test_required_vacancies.add(vacancy_id)
+                            logger.info(f"📱 Вакансия {vacancy_id} требует тест, добавлям в чёрный список")
+                        
                         if telegram_id in self.error_counts:
                             self.error_counts[telegram_id][error_type] += 1
                         logger.warning(f"Не удалось отправить отклик: {error_type}")
@@ -357,7 +372,7 @@ class TaskScheduler:
             else:
                 error_msg = result.get('error', 'Неизвестная ошибка')
 
-                if "test_required" in error_msg.lower():
+                if "test_required" in error_msg.lower() or "must process test" in error_msg.lower():
                     return False, 'test_required'
                 elif "403" in error_msg and "forbidden" in error_msg.lower():
                     return False, 'access_denied'
@@ -437,6 +452,7 @@ class TaskScheduler:
         """Очистка кеша обработанных вакансий"""
         self.user_vacancy_cache.clear()
         self.cache_timestamps.clear()
+        self.test_required_vacancies.clear()
         logger.info("Кеш обработанных вакансий очищен")
 
 
