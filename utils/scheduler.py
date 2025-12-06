@@ -25,11 +25,10 @@ class TaskScheduler:
         self.scheduler = AsyncIOScheduler()
         self.active_users: Set[int] = set()
         self.is_running = False
-        # FIX: По вместо глобального кеша используем по-узовые кеши с временным таймаутом
-        self.user_vacancy_cache: Dict[int, Set[str]] = {}  # Кеш по пользователям: {user_id: {vacancy_ids}}
-        self.cache_timestamps: Dict[int, datetime] = {}  # Временные метки кеша
-        self.cache_ttl_hours = 24  # Кеш действителен 24 часа
-        self.error_counts: Dict[int, Dict[str, int]] = {}  # Счетчики ошибок
+        self.user_vacancy_cache: Dict[int, Set[str]] = {}
+        self.cache_timestamps: Dict[int, datetime] = {}
+        self.cache_ttl_hours = 24
+        self.error_counts: Dict[int, Dict[str, int]] = {}
 
     async def start(self) -> None:
         """Запуск планировщика"""
@@ -50,12 +49,10 @@ class TaskScheduler:
             self.is_running = False
             self.active_users.clear()
 
-            # Останавливаем все непрерывные задачи
             global continuous_tasks
             for telegram_id in list(continuous_tasks.keys()):
                 await stop_continuous_auto_responses(telegram_id)
 
-            # Очищаем на памяти
             self.user_vacancy_cache.clear()
             self.cache_timestamps.clear()
             self.error_counts.clear()
@@ -71,7 +68,6 @@ class TaskScheduler:
             return
 
         self.active_users.add(telegram_id)
-        # FIX: Инициализируем кеш для нового пользователя
         self.user_vacancy_cache[telegram_id] = set()
         self.cache_timestamps[telegram_id] = datetime.now()
 
@@ -103,7 +99,6 @@ class TaskScheduler:
 
         self.active_users.discard(telegram_id)
 
-        # FIX: Очищаем все кеши для пользователя
         if telegram_id in self.user_vacancy_cache:
             del self.user_vacancy_cache[telegram_id]
         if telegram_id in self.cache_timestamps:
@@ -124,23 +119,19 @@ class TaskScheduler:
         logger.info(f"Автоотклики: запущена функция _process_auto_responses для {telegram_id}")
 
         try:
-            # Проверка предварительных условий
             if not await self._validate_user_conditions(telegram_id):
                 return
 
-            # Получаем настройки пользователя
             user_settings = await db_repository.get_user_settings(telegram_id)
             if not user_settings:
                 logger.warning(f"Нет настроек для пользователя {telegram_id}")
                 return
 
-            # Получаем активное резюме
             active_resume = await db_repository.get_active_resume(telegram_id)
             if not active_resume:
                 logger.warning(f"Нет активного резюме для пользователя {telegram_id}")
                 return
 
-            # Ищем подходящие вакансии
             suitable_vacancies = await self._find_suitable_vacancies(
                 telegram_id, user_settings, active_resume
             )
@@ -152,7 +143,6 @@ class TaskScheduler:
                 await self._send_no_vacancies_notification(telegram_id)
                 return
 
-            # Отправляем отклики
             responses_sent, errors_count = await self._send_responses(
                 telegram_id, suitable_vacancies, active_resume, user_settings
             )
@@ -181,7 +171,7 @@ class TaskScheduler:
                 await self.stop_auto_responses(telegram_id)
                 return False
 
-            # FIX: Добавляем проверку на None перед сравнением
+            # FIX: Проверка на None перед сравнением
             today_count = await self._get_today_responses_count(telegram_id)
             if today_count is None:
                 logger.warning(f"today_count вернул None для пользователя {telegram_id}, используем 0")
@@ -214,16 +204,14 @@ class TaskScheduler:
         user_settings: Dict[str, Any],
         active_resume: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Поиск подходящих вакансий с имправленным кешированием"""
+        """Поиск подходящих вакансий"""
         try:
-            # FIX: Очищаем кеш если его время истекло
             if self._is_cache_expired(telegram_id):
                 logger.info(f"Кеш вакансий истек: очищаем для пользователя {telegram_id}")
                 if telegram_id in self.user_vacancy_cache:
                     self.user_vacancy_cache[telegram_id].clear()
                 self.cache_timestamps[telegram_id] = datetime.now()
 
-            # Собираем параметры поиска
             search_params: Dict[str, Any] = {
                 'text': user_settings.get('keywords'),
                 'salary': user_settings.get('min_salary'),
@@ -249,25 +237,20 @@ class TaskScheduler:
             if not vacancies:
                 return []
 
-            # FIX: Олько которых ещё не откликали в БД
             final_vacancies = []
             for vacancy_data in vacancies:
                 vacancy = vacancy_data if isinstance(vacancy_data, dict) else {'id': vacancy_data}
                 vacancy_id = str(vacancy.get('id'))
 
-                # Проверяем не откликали ли уже
                 if not await self._is_response_exists(telegram_id, vacancy_id):
                     final_vacancies.append(vacancy_data)
                     logger.info(f"Новая вакансия: {vacancy_id}")
-                else:
-                    logger.info(f"Пропущена вакансия (уже откликали): {vacancy_id}")
 
             logger.info(f"Вновь найдено вакансий: {len(final_vacancies)}")
 
             if not final_vacancies:
                 return []
 
-            # Фильтруем по соответствию
             min_score = user_settings.get('min_match_score')
             if not isinstance(min_score, int):
                 min_score = 60
@@ -290,17 +273,20 @@ class TaskScheduler:
         active_resume: Dict[str, Any],
         user_settings: Dict[str, Any]
     ) -> Tuple[int, int]:
-        """Отправка откликов с корректным управлением session"""
+        """Отправка откликов"""
         responses_sent = 0
         errors_count = 0
         resume_id = str(active_resume.get('id'))
-        # FIX: Сохраняем все bot сессии в кеш
-        bot_cache = {}
 
         try:
             for vacancy_data in suitable_vacancies:
                 try:
+                    # FIX: Проверка на None перед сравнением
                     today_count = await self._get_today_responses_count(telegram_id)
+                    if today_count is None:
+                        logger.warning(f"today_count вернул None в _send_responses для {telegram_id}, используем 0")
+                        today_count = 0
+                    
                     max_responses = getattr(Config, 'MAX_RESPONSES_PER_DAY', 20)
 
                     if today_count >= max_responses:
@@ -317,7 +303,7 @@ class TaskScheduler:
                     )
 
                     success, error_type = await self._send_single_response(
-                        telegram_id, vacancy_id, resume_id, cover_letter, vacancy, bot_cache
+                        telegram_id, vacancy_id, resume_id, cover_letter, vacancy
                     )
 
                     if success:
@@ -329,7 +315,7 @@ class TaskScheduler:
                         responses_sent += 1
                         logger.info(f"Успешно отправлен отклик на вакансию {vacancy_id}")
 
-                        await self._send_telegram_notification(telegram_id, vacancy, cover_letter, bot_cache)
+                        await self._send_telegram_notification(telegram_id, vacancy, cover_letter)
 
                         delay = getattr(Config, 'RESPONSE_DELAY_SECONDS', 30)
                         await asyncio.sleep(delay)
@@ -346,14 +332,8 @@ class TaskScheduler:
                     logger.error(f"Ошибка отправки: {e}")
                     continue
 
-        finally:
-            # FIX: Незабываем закрыть ВСЕ bot сессии
-            for bot in bot_cache.values():
-                try:
-                    await bot.session.close()
-                except:
-                    pass
-            bot_cache.clear()
+        except Exception as e:
+            logger.error(f"Критичная ошибка в _send_responses: {e}")
 
         return responses_sent, errors_count
 
@@ -363,12 +343,11 @@ class TaskScheduler:
         vacancy_id: str,
         resume_id: str,
         cover_letter: str,
-        vacancy: Dict[str, Any],
-        bot_cache: Dict = None
+        vacancy: Dict[str, Any]
     ) -> Tuple[bool, str]:
-        """Отправка одного отклика с классификацией ошибок"""
+        """Отправка одного отклика"""
         try:
-            logger.info(f"РЕАЛЬНАЯ отправка отклика на вакансию {vacancy_id}")
+            logger.info(f"Отправка отклика на вакансию {vacancy_id}")
 
             result = await hh_client.send_response_to_vacancy(vacancy_id, resume_id, cover_letter)
 
@@ -393,64 +372,54 @@ class TaskScheduler:
             logger.error(f"Критичная ошибка отправки: {e}")
             return False, 'other_errors'
 
-    # Остальные методы остаются беез изменений...
-    # (мы только редактируем основные неустойчивые части)
-
-    async def _handle_test_required_error(self, telegram_id: int, vacancy: Dict[str, Any], error_msg: str) -> None:
-        """Обработка ошибки требования теста"""
-        pass  # Остаётся беез изменений
-
-    async def _handle_access_denied_error(self, telegram_id: int, vacancy: Dict[str, Any], error_msg: str) -> None:
-        """Обработка ошибки доступа"""
-        pass  # Остаётся беез изменений
-
     async def _send_error_summary(self, telegram_id: int, responses_sent: int, errors_count: int, total_vacancies: int) -> None:
         """Отправка сводки ошибок"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _send_no_vacancies_notification(self, telegram_id: int) -> None:
         """Уведомление об отсутствии вакансий"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _send_limit_reached_notification(self, telegram_id: int, current_count: int, max_limit: int) -> None:
         """Уведомление о лимите"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _send_auth_required_notification(self, telegram_id: int) -> None:
-        """Уведомление о реввторизации"""
-        pass  # Остаётся беез изменений
+        """Уведомление о реавторизации"""
+        pass
 
     async def _send_critical_error_notification(self, telegram_id: int, error_message: str) -> None:
         """Уведомление о критической ошибке"""
-        pass  # Остаётся беез изменений
+        pass
 
-    async def _send_telegram_notification(self, telegram_id: int, vacancy: Dict[str, Any], cover_letter: str, bot_cache: Dict = None) -> None:
+    async def _send_telegram_notification(self, telegram_id: int, vacancy: Dict[str, Any], cover_letter: str) -> None:
         """Отправка уведомления в Telegram"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _generate_cover_letter(self, vacancy: Dict[str, Any], resume: Dict[str, Any], template: str = None) -> str:
         """Генерация сопроводительного письма"""
-        pass  # Остаётся беез изменений
-
-    def _get_default_cover_letter(self, vacancy_name: str, company_name: str) -> str:
-        """Получение стандартного сопроводительного письма"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _save_response_to_db(self, telegram_id: int, vacancy_id: str, cover_letter: str, match_score: int) -> None:
         """Сохранение отклика в БД"""
-        pass  # Остаётся беез изменений
+        pass
 
     async def _is_response_exists(self, telegram_id: int, vacancy_id: str) -> bool:
         """Проверка существования отклика"""
-        pass  # Остаётся беез изменений
+        pass
 
-    async def _get_today_responses_count(self, telegram_id: int) -> int:
+    async def _get_today_responses_count(self, telegram_id: int) -> Optional[int]:
         """Получение количества откликов за сегодня"""
-        pass  # Остаётся беез изменений
+        try:
+            stats = await db_repository.get_today_stats(telegram_id)
+            return stats.get('today_count', 0)
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики тодая: {e}")
+            return None
 
     async def _load_active_users(self) -> None:
-        """Загрузка активных пользователей из БД"""
-        pass  # Остаётся беез изменений
+        """Загруженние активных пользователей из БД"""
+        pass
 
     def get_active_users_count(self) -> int:
         """Получение количества активных пользователей"""
@@ -471,24 +440,19 @@ class TaskScheduler:
         logger.info("Кеш обработанных вакансий очищен")
 
 
-# Глобальный экземпляр планировщика
 task_scheduler = TaskScheduler()
 
 
-# ========== НЕПРЕРЫВНЫЕ АВТООТКЛИКИ (Continuous Auto-Responses) ==========
-
 async def start_continuous_auto_responses(telegram_id: int) -> bool:
-    """Запуск непрерывных автооткликов (каждую минуту)"""
+    """Запуск непрерывных автооткликов"""
     global continuous_tasks
 
-    # Проверяем что уже не запущены
     if telegram_id in continuous_tasks and not continuous_tasks[telegram_id].done():
         logger.warning(f"Непрерывные автоотклики уже запущены для {telegram_id}")
         return False
 
     logger.info(f"Запуск непрерывных автооткликов для {telegram_id}")
 
-    # Создаем и сохраняем задачу
     task = asyncio.create_task(_continuous_auto_responses_loop(telegram_id))
     continuous_tasks[telegram_id] = task
 
@@ -510,12 +474,10 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
             logger.info(f"Итерация {iteration} непрерывных откликов для {telegram_id}")
 
             try:
-                # Проверяем предварительные условия
                 if not await task_scheduler._validate_user_conditions(telegram_id):
                     logger.warning(f"Условия не пройдены, остановка непрерывных откликов для {telegram_id}")
                     break
 
-                # Получаем настройки
                 user_settings = await db_repository.get_user_settings(telegram_id)
                 active_resume = await db_repository.get_active_resume(telegram_id)
 
@@ -523,13 +485,11 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
                     logger.warning(f"Нет настроек или резюме для {telegram_id}")
                     break
 
-                # Ищем вакансии
                 suitable_vacancies = await task_scheduler._find_suitable_vacancies(
                     telegram_id, user_settings, active_resume
                 )
 
                 if suitable_vacancies:
-                    # Отправляем отклики
                     responses_sent, errors_count = await task_scheduler._send_responses(
                         telegram_id, suitable_vacancies, active_resume, user_settings
                     )
@@ -539,16 +499,14 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
                         f"отправлено {responses_sent}, ошибок {errors_count}"
                     )
 
-                    # Отправляем уведомление в Telegram каждые 10 итераций
                     if iteration % 10 == 0:
                         total_today = await task_scheduler._get_today_responses_count(telegram_id)
                         logger.info(f"Статистика за сегодня: {total_today} откликов для {telegram_id}")
 
-                    error_count = 0  # Сбрасываем счетчик ошибок
+                    error_count = 0
                 else:
                     logger.info(f"Нет новых подходящих вакансий для {telegram_id}")
 
-                # Ждем перед следующей итерацией (1 минута)
                 await asyncio.sleep(60)
 
             except asyncio.CancelledError:
@@ -569,12 +527,10 @@ async def _continuous_auto_responses_loop(telegram_id: int) -> None:
                     )
                     break
 
-                # Ждем перед повторной попыткой
                 await asyncio.sleep(60)
 
     finally:
         logger.info(f"Цикл непрерывных откликов завершился для {telegram_id}")
-        # Очищаем задачу из словаря
         if telegram_id in continuous_tasks:
             del continuous_tasks[telegram_id]
 
