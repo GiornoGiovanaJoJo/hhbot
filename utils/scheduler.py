@@ -4,6 +4,7 @@
 import asyncio
 from typing import Dict, Set, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
@@ -34,6 +35,9 @@ class TaskScheduler:
         self.blacklist_test_required: Set[str] = set()
         # Отслеживаем время последней попытки для каждой вакансии с тестом
         self.test_vacancy_attempts: Dict[str, int] = {}
+        # FIX: Кеш для сопроводительного письма
+        self._cover_letter_cache: Optional[str] = None
+        self._cover_letter_cache_time: Optional[datetime] = None
 
     async def start(self) -> None:
         """Запуск планировщика"""
@@ -422,7 +426,28 @@ class TaskScheduler:
 
     async def _generate_cover_letter(self, vacancy: Dict[str, Any], resume: Dict[str, Any], template: str = None) -> str:
         """Генерация сопроводительного письма"""
-        pass
+        # FIX: НА РЕАЛЬНО загружаем сопроводительное письмо
+        try:
+            # Пробуем тю путь что надо
+            cover_letter_path = Path(template) if template else Path('config/cover_letter_template.txt')
+            
+            # Также пробуем абсолютные пути
+            if not cover_letter_path.exists():
+                cover_letter_path = Path('.') / 'config' / 'cover_letter_template.txt'
+            
+            if not cover_letter_path.exists():
+                logger.error(f"Не найден шаблон сопроводительного письма по пути: {cover_letter_path}")
+                return ""
+            
+            with open(cover_letter_path, 'r', encoding='utf-8') as f:
+                cover_letter = f.read()
+            
+            logger.info(f"📘 Сопроводительное письмо загружено ({len(cover_letter)} символов)")
+            return cover_letter
+            
+        except Exception as e:
+            logger.error(f"Ошибка генерации сопроводительного письма: {e}")
+            return ""
 
     async def _save_response_to_db(self, telegram_id: int, vacancy_id: str, cover_letter: str, match_score: int) -> None:
         """Сохранение отклика в БД"""
@@ -438,7 +463,7 @@ class TaskScheduler:
             stats = await db_repository.get_today_stats(telegram_id)
             return stats.get('today_count', 0)
         except Exception as e:
-            logger.error(f"Ошибка получения статистики тодаяя: {e}")
+            logger.error(f"Ошибка получения статистики тодая: {e}")
             return None
 
     async def _load_active_users(self) -> None:
