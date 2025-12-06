@@ -1,0 +1,9 @@
+aiogram
+aiohttp
+aiosqlite==0.20.0
+APScheduler==3.10.4
+python-decouple==3.8
+cryptography==42.0.5
+pydantic==2.7.4
+python-multipart==0.0.6
+loguru==0.7.2
