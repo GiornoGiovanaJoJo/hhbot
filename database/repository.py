@@ -3,7 +3,7 @@
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
@@ -405,6 +405,30 @@ class DatabaseRepository:
                 'cover_letter_template': row[12],
                 'auto_response_enabled': bool(row[13]),
             }
+
+    async def get_today_stats(self, telegram_id: int) -> Dict[str, int]:
+        """Возвращает статистику откликов за сегодня"""
+        today = date.today().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            # Получаем internal user_id
+            cursor = await db.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return {'today_count': 0, 'today_responses': []}
+            user_id = row[0]
+
+            # Сколько откликов сегодня
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM responses WHERE user_id = ? AND DATE(created_at) = ?",
+                (user_id, today)
+            )
+            today_count = (await cursor.fetchone())[0] or 0
+
+            return {
+                'today_count': today_count,
+                'today_responses': []
+            }
+
     async def get_user_stats(self, telegram_id: int) -> Dict[str, Any]:
         """Возвращает общую статистику пользователя."""
         async with aiosqlite.connect(self.db_path) as db:
