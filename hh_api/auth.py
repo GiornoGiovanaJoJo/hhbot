@@ -15,6 +15,31 @@ from cryptography.fernet import Fernet
 
 from config import Config
 from hh_api.client import hh_client
+from aiohttp import web
+import asyncio
+
+
+async def start_callback_server():
+    """Запускает простой локальный сервер для OAuth callback"""
+    app = web.Application()
+
+    async def callback_handler(request):
+        code = request.rel_url.query.get('code')
+        if code:
+            # Сохраните code в файл или переменную окружения
+            with open('auth_code.txt', 'w') as f:
+                f.write(code)
+            return web.Response(text="✅ Авторизация успешна! Закройте это окно.")
+        return web.Response(text="❌ Ошибка авторизации", status=400)
+
+    app.router.add_get('/auth/callback', callback_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', 8000)
+    await site.start()
+    print("✅ Callback server started on http://localhost:8000")
+    return runner
 
 
 class HHAuthManager:

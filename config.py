@@ -52,7 +52,7 @@ class Config:
     # Настройки поиска вакансий
     DEFAULT_SEARCH_PERIOD_DAYS: int = config('DEFAULT_SEARCH_PERIOD_DAYS', default=3, cast=int)
     MAX_VACANCIES_PER_SEARCH: int = config('MAX_VACANCIES_PER_SEARCH', default=100, cast=int)
-    SEARCH_DELAY_SECONDS: int = config('SEARCH_DELAY_SECONDS', default=60, cast=int)
+    SEARCH_DELAY_SECONDS: int = config('SEARCH_DELAY_SECONDS', default=10, cast=int)
 
     # Настройки API клиента
     API_REQUEST_TIMEOUT: int = config('API_REQUEST_TIMEOUT', default=30, cast=int)

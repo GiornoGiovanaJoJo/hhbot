@@ -14,7 +14,7 @@ from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramError
+from aiogram.exceptions import TelegramAPIError
 from loguru import logger
 
 from config import Config, WindowsConfig, Messages
