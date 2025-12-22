@@ -1,0 +1,58 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.Python
+venv
+env
+.venv
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Tests
+.pytest_cache
+.coverage
+htmlcov/
+.tox
+
+# Documentation
+docs/
+*.md
+
+# Development
+.env
+.env.*
+*.sqlite
+*.db
+data/
+database/
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Misc
+node_modules
+npm-debug.log
+dist/
+build/
