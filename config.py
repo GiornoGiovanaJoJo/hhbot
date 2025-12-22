@@ -23,7 +23,7 @@ class Config:
     # HeadHunter API настройки
     HH_CLIENT_ID: str = config('HH_CLIENT_ID', default='')
     HH_CLIENT_SECRET: str = config('HH_CLIENT_SECRET', default='')
-    HH_REDIRECT_URI: str = config('HH_REDIRECT_URI', default='http://localhost:8000/auth/callback')
+    HH_REDIRECT_URI: str = config('HH_REDIRECT_URI', default='urn:ietf:wg:oauth:2.0:oob')
     HH_API_BASE_URL: str = 'https://api.hh.ru'
     HH_OAUTH_BASE_URL: str = 'https://hh.ru/oauth'
 
@@ -87,7 +87,7 @@ class Config:
         if not cls.TELEGRAM_BOT_TOKEN or cls.TELEGRAM_BOT_TOKEN == '':
             errors.append("🔢 TELEGRAM_BOT_TOKEN не задан")
         elif len(cls.TELEGRAM_BOT_TOKEN) < 30:
-            warnings.append("⚠️ TELEGRAM_BOT_TOKEN может быть некорректнюя (топкен слишком короткий)")
+            warnings.append("⚠️ TELEGRAM_BOT_TOKEN может быть некорректный (токен слишком короткий)")
 
         if not cls.HH_CLIENT_ID or cls.HH_CLIENT_ID == '':
             errors.append("🔢 HH_CLIENT_ID не задан")
@@ -95,13 +95,18 @@ class Config:
         if not cls.HH_CLIENT_SECRET or cls.HH_CLIENT_SECRET == '':
             errors.append("🔢 HH_CLIENT_SECRET не задан")
 
-        # Валидация URL
-        try:
-            parsed = urlparse(cls.HH_REDIRECT_URI)
-            if not parsed.scheme or not parsed.netloc:
-                errors.append(f"🔢 HH_REDIRECT_URI некорректный URL: {cls.HH_REDIRECT_URI}")
-        except Exception as e:
-            errors.append(f"🔢 HH_REDIRECT_URI невалидный: {e}")
+        # ✅ ИСПРАВЛЕНО: Валидация URI - поддерживаем оба варианта
+        # 1. urn:ietf:wg:oauth:2.0:oob (для desktop приложений)
+        # 2. http(s):// (для веб-приложений)
+        if cls.HH_REDIRECT_URI:
+            is_urn = cls.HH_REDIRECT_URI.startswith('urn:ietf:wg:oauth:2.0:oob')
+            if not is_urn:
+                try:
+                    parsed = urlparse(cls.HH_REDIRECT_URI)
+                    if not parsed.scheme or not parsed.netloc:
+                        errors.append(f"🔢 HH_REDIRECT_URI некорректный URL: {cls.HH_REDIRECT_URI}")
+                except Exception as e:
+                    errors.append(f"🔢 HH_REDIRECT_URI невалидный: {e}")
 
         # Проверка Redis конфигурации если используется
         if cls.FSM_STORAGE_TYPE == 'redis':
