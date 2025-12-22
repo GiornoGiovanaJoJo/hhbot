@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: hhbot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hhbot-network
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hhbot
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - HH_CLIENT_ID=${HH_CLIENT_ID}
+      - HH_CLIENT_SECRET=${HH_CLIENT_SECRET}
+      - HH_REDIRECT_URI=${HH_REDIRECT_URI}
+      - ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
+      - FSM_STORAGE_TYPE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - LOG_LEVEL=INFO
+      - LOG_FILE=/app/logs/hh_bot.log
+    volumes:
+      - ./logs:/app/logs
+      - ./database:/app/database
+      - ./data:/app/data
+      - ./config:/app/config
+    networks:
+      - hhbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  hhbot-network:
+    driver: bridge
